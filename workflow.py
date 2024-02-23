@@ -27,7 +27,7 @@ class Job:
                     self.completed_callback_jobs.add(callback_job)
 
             # Update JSON file with today's date and set completed flag to true
-            with open("/Users/vikramaditya/code/PycharmProjects/pythonProject/resources/jobs.json", "r+") as json_file:
+            with open("../resources/jobs.json", "r+") as json_file:
                 data = json.load(json_file)
                 for job_data in data["jobs"]:
                     if job_data["name"] == self.name:
@@ -60,7 +60,7 @@ def create_jobs_from_json(jobs_data):
 
 # Load jobs from JSON file
 def load_jobs():
-    with open("/Users/vikramaditya/code/PycharmProjects/pythonProject/resources/jobs.json", "r") as json_file:
+    with open("../resources/jobs.json", "r") as json_file:
         workflow_data = json.load(json_file)
 
     jobs = create_jobs_from_json(workflow_data)

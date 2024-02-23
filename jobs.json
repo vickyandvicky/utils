@@ -1,0 +1,49 @@
+{
+    "jobs": [
+        {
+            "name": "Job1",
+            "dependencies": [],
+            "completed": true,
+            "callbacks": [
+                "run_job2",
+                "run_job3"
+            ],
+            "completion_date": "2024-02-23"
+        },
+        {
+            "name": "Job2",
+            "dependencies": [
+                "Job1"
+            ],
+            "completed": false,
+            "callbacks": [
+                "run_job4"
+            ],
+            "completion_date": "2024-02-23"
+        },
+        {
+            "name": "Job3",
+            "dependencies": [
+                "Job2"
+            ],
+            "completed": false,
+            "callbacks": [
+                "run_job5",
+                "run_job6"
+            ],
+            "completion_date": "2024-02-22"
+        },
+        {
+            "name": "Job4",
+            "dependencies": [
+                "Job1",
+                "Job3"
+            ],
+            "completed": false,
+            "callbacks": [
+                "run_job7",
+                "run_job8"
+            ]
+        }
+    ]
+}

@@ -1,49 +1,56 @@
 {
-    "jobs": [
-        {
-            "name": "Job1",
-            "dependencies": [],
-            "completed": true,
-            "callbacks": [
-                "run_job2",
-                "run_job3"
-            ],
-            "completion_date": "2024-02-23"
-        },
-        {
-            "name": "Job2",
-            "dependencies": [
-                "Job1"
-            ],
-            "completed": false,
-            "callbacks": [
-                "run_job4"
-            ],
-            "completion_date": "2024-02-23"
-        },
-        {
-            "name": "Job3",
-            "dependencies": [
-                "Job2"
-            ],
-            "completed": false,
-            "callbacks": [
-                "run_job5",
-                "run_job6"
-            ],
-            "completion_date": "2024-02-22"
-        },
-        {
-            "name": "Job4",
-            "dependencies": [
-                "Job1",
-                "Job3"
-            ],
-            "completed": false,
-            "callbacks": [
-                "run_job7",
-                "run_job8"
-            ]
-        }
-    ]
+  "jobs": [
+    {
+      "name": "Job1",
+      "completed": true,
+      "snapshot_date": "2024-01-05",
+      "job_frequency": "Daily",
+      "dependencies": []
+    },
+    {
+      "name": "Job2",
+      "completed": true,
+      "snapshot_date": "2024-01-05",
+      "job_frequency": "Daily",
+      "dependencies": [
+        "Job1"
+      ]
+    },
+    {
+      "name": "Job3",
+      "completed": true,
+      "snapshot_date": "2024-01-05",
+      "job_frequency": "Daily",
+      "dependencies": [
+        "Job2"
+      ]
+    },
+    {
+      "name": "Job4",
+      "completed": true,
+      "snapshot_date": "2024-01-05",
+      "job_frequency": null,
+      "dependencies": [
+        "Job1",
+        "Job3"
+      ]
+    },
+    {
+      "name": "Job5",
+      "completed": false,
+      "snapshot_date": "2024-01-01",
+      "job_frequency": null,
+      "dependencies": []
+    },
+    {
+      "name": "Job6",
+      "completed": false,
+      "snapshot_date": "2024-01-05",
+      "job_frequency": null,
+      "dependencies": [
+        "Job1",
+        "Job5"
+      ]
+    }
+  ]
 }

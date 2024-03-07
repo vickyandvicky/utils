@@ -1,0 +1,207 @@
+{
+  "TableName": "Orders",
+  "AttributeDefinitions": [
+    { "AttributeName": "order_id", "AttributeType": "S" },
+    { "AttributeName": "user_id", "AttributeType": "S" },
+    { "AttributeName": "order_date", "AttributeType": "S" },
+    { "AttributeName": "status", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "order_id", "KeyType": "HASH" }
+  ],
+  "ProvisionedThroughput": {
+    "ReadCapacityUnits": 5,
+    "WriteCapacityUnits": 5
+  },
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "StatusDateIndex",
+      "KeySchema": [
+        { "AttributeName": "status", "KeyType": "HASH" },
+        { "AttributeName": "order_date", "KeyType": "RANGE" }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 5,
+        "WriteCapacityUnits": 5
+      }
+    }
+  ]
+}
+
+The design of the Orders table in DynamoDB will depend on your specific use case, access patterns, and the queries you need to perform. Below is a design idea for the Orders table based on the information provided:
+
+Orders Table Design:
+Table Name: Orders
+
+Primary Key:
+
+Partition Key: order_id (String or Number)
+Attributes:
+
+order_id (String or Number)
+user_id (String or Number)
+order_date (String or Date)
+status (String)
+Secondary Index:
+
+Global Secondary Index: StatusDateIndex
+Partition Key: status (String)
+Sort Key: order_date (String or Date)
+Example structure:
+
+json
+Copy code
+{
+  "TableName": "Orders",
+  "AttributeDefinitions": [
+    { "AttributeName": "order_id", "AttributeType": "S" },
+    { "AttributeName": "user_id", "AttributeType": "S" },
+    { "AttributeName": "order_date", "AttributeType": "S" },
+    { "AttributeName": "status", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "order_id", "KeyType": "HASH" }
+  ],
+  "ProvisionedThroughput": {
+    "ReadCapacityUnits": 5,
+    "WriteCapacityUnits": 5
+  },
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "StatusDateIndex",
+      "KeySchema": [
+        { "AttributeName": "status", "KeyType": "HASH" },
+        { "AttributeName": "order_date", "KeyType": "RANGE" }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 5,
+        "WriteCapacityUnits": 5
+      }
+    }
+  ]
+}
+In this design:
+
+The primary key (order_id) uniquely identifies each order.
+The user_id, order_date, and status are attributes associated with each order.
+The StatusDateIndex global secondary index allows efficient querying of orders based on their status and order date.
+This design enables you to quickly retrieve orders by their primary key and perform queries that involve filtering and sorting based on the status and order date using the global secondary index.
+
+Adapt this design based on additional requirements and queries you may need to support in your application.
+
+
+
+{
+  "TableName": "Items",
+  "AttributeDefinitions": [
+    { "AttributeName": "order_id", "AttributeType": "S" },
+    { "AttributeName": "item_id", "AttributeType": "S" },
+    { "AttributeName": "item_status", "AttributeType": "S" },
+    { "AttributeName": "item_dispatched_date", "AttributeType": "S" }
+  ],
+  "KeySchema": [
+    { "AttributeName": "order_id", "KeyType": "HASH" },
+    { "AttributeName": "item_id", "KeyType": "RANGE" }
+  ],
+  "ProvisionedThroughput": {
+    "ReadCapacityUnits": 5,
+    "WriteCapacityUnits": 5
+  },
+  "GlobalSecondaryIndexes": [
+    {
+      "IndexName": "ItemStatusIndex",
+      "KeySchema": [
+        { "AttributeName": "item_status", "KeyType": "HASH" },
+        { "AttributeName": "item_dispatched_date", "KeyType": "RANGE" }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      },
+      "ProvisionedThroughput": {
+        "ReadCapacityUnits": 5,
+        "WriteCapacityUnits": 5
+      }
+    }
+  ]
+}
+=======
+  Considering the Orders and Items tables, here's an example design and query strategy to efficiently query which user's orders failed for given dates:
+
+Orders Table:
+Table Name: Orders
+
+Primary Key:
+
+Partition Key: order_id (String or Number)
+Attributes:
+
+order_id (String or Number)
+user_id (String or Number)
+order_date (String or Date)
+status (String)
+Global Secondary Index:
+
+Index Name: StatusDateIndex
+Partition Key: status (String)
+Sort Key: order_date (String or Date)
+Items Table:
+Table Name: Items
+
+Primary Key:
+
+Partition Key: order_id (String or Number)
+Sort Key: item_id (String or Number)
+Attributes:
+
+order_id (String or Number)
+item_id (String or Number)
+item_status (String)
+item_dispatched_date (String or Date)
+Global Secondary Index:
+
+Index Name: ItemStatusIndex
+Partition Key: item_status (String)
+Sort Key: item_dispatched_date (String or Date)
+Query Strategy:
+Query Items Table for Failed Items:
+
+Use the query operation on the Items table to retrieve items with a failed status for the given date range.
+javascript
+Copy code
+const itemsParams = {
+  TableName: "Items",
+  IndexName: "ItemStatusIndex",
+  KeyConditionExpression: "#status = :status AND item_dispatched_date BETWEEN :startDate AND :endDate",
+  ExpressionAttributeNames: {
+    "#status": "item_status"
+  },
+  ExpressionAttributeValues: {
+    ":status": "failed",
+    ":startDate": startDate,
+    ":endDate": endDate
+  }
+};
+Retrieve User Information from Orders Table:
+
+For each failed item retrieved, use the order_id to query the Orders table and obtain user-related information.
+javascript
+Copy code
+const ordersParams = {
+  TableName: "Orders",
+  KeyConditionExpression: "order_id = :oid",
+  ExpressionAttributeValues: {
+    ":oid": order_id
+  }
+};
+Considerations:
+
+The design assumes the existence of global secondary indexes (StatusDateIndex and ItemStatusIndex) for efficient querying.
+Provisioned throughput should be adjusted based on the expected workload and access patterns.
+This approach allows you to efficiently query and retrieve information related to failed items and their corresponding users.
+Please adapt the design based on your specific requirements and workload patterns in your application.

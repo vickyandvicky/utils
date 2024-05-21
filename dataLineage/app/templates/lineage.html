@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lineage Chart with Highcharts</title>
+    <!-- Include Highcharts library -->
+    <script src="https://code.highcharts.com/highcharts.js"></script>
+    <script src="https://code.highcharts.com/modules/networkgraph.js"></script>
+</head>
+<body>
+    <h1>Lineage Chart with Highcharts</h1>
+    <!-- Chart container -->
+    <div id="container" style="width: 800px; height: 600px;"></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Define lineage data
+            var lineageData = [
+                { id: 'A', name: 'A', parent: null },
+                { id: 'B', name: 'B', parent: 'A' },
+                { id: 'C', name: 'C', parent: 'B' },
+                { id: 'D', name: 'D', parent: 'C' }
+            ];
+
+            // Convert lineage data to Highcharts series format
+            var seriesData = [];
+            lineageData.forEach(function(item, index) {
+                var parentIndex = lineageData.findIndex(function(element) {
+                    return element.name === item.parent;
+                });
+                if (parentIndex >= 0) {
+                    seriesData.push({
+                        from: lineageData[parentIndex].id,
+                        to: item.id
+                    });
+                }
+            });
+
+            // Initialize Highcharts
+            var chart = Highcharts.chart('container', {
+                chart: {
+                    type: 'networkgraph'
+                },
+                title: {
+                    text: 'Lineage Chart'
+                },
+                plotOptions: {
+                    networkgraph: {
+                        keys: ['from', 'to'],
+                        layoutAlgorithm: {
+                            enableSimulation: false  // Disable simulation for better performance
+                        },
+                        nodeSize: 50  // Set node size to 25 pixels
+                    }
+                },
+                series: [{
+                    data: seriesData
+                }]
+            });
+        });
+    </script>
+</body>
+</html>

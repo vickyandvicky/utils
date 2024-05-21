@@ -1,0 +1,9 @@
+[
+    {"id": 1, "name": "Table A", "team_id": 1},
+    {"id": 2, "name": "Table B", "team_id": 1},
+    {"id": 3, "name": "Table C", "team_id": 1},
+    {"id": 4, "name": "Table D", "team_id": 2},
+    {"id": 5, "name": "Table Z", "team_id": 3},
+    {"id": 6, "name": "Table Y", "team_id": 3},
+    {"id": 7, "name": "Table X", "team_id": 3}
+]

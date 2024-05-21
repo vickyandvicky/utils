@@ -1,0 +1,5 @@
+[
+    {"source_table_id": 1, "target_table_id": 4},
+    {"source_table_id": 4, "target_table_id": 8},
+    {"source_table_id": 4, "target_table_id": 9}
+]

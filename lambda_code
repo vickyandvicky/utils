@@ -1,0 +1,266 @@
+import logging
+import boto3
+import json
+import os
+from botocore.exceptions import ClientError
+from .audit.dynamoDE import JobAuditTable
+from .jobconfig.Config53 import Jobconfigs3
+
+# Constants
+EDP_RUN_API = os.getenv("EDP_RUN_API")
+CONFIG_PATH = "s3://app-id-89055-dep-id-109792-uu-id-rlclefdkc5by/dias/ais/views script/view-phyzn-ldr/job config/"
+SPARK_SCRIPT = "s3://app-id-89055-dep-id-109792-uu-id-rlclefdkc5by/dias/ais/views script/view-phyzn-ldr/src/jobs/viewetl/viewdist.py"
+STEP_FUNCTION_NAME = os.getenv("STEP_FUNCTION_NAME")
+ANS_ACCOUNT = os.getenv("ANS_ACCOUNT")
+CLUSTER_NAME = os.getenv("CLUSTER_NAME")
+VIEWS_CONFIG = os.getenv("VIEWS_CONFIG")
+ENV = os.getenv("ENVIRONMENT")
+EDE_UTILS_PATH = "s3://app-id-89055-dep-id-109792-uu-id-isbsy14x00ew/application/dias encore/develop/hcdlakeblue/70/config/bootstrap.sh"
+SPARK_MODE = "client"
+
+# Logger setup
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# AWS clients
+emr_client = boto3.client('emr', region_name='us-east-1', endpoint_url="https://elasticmapreduce.us-east-1.amazonaws.com")
+sfn_client = boto3.client('stepfunctions')
+s3_client = boto3.client('s3')
+
+
+def invoke_step_function(step_function_arn, step_function_input):
+    try:
+        logger.info("Invoking step function with input: %s", step_function_input)
+        sf_input = json.loads(step_function_input)
+        response = sfn_client.start_execution(
+            stateMachineArn=step_function_arn,
+            input=step_function_input,
+            name=f"{sf_input['job_name']}_{sf_input['snapshot_date']}_{sf_input['job_version']}"
+        )
+        logger.info("Step function %s triggered successfully.", step_function_arn)
+        return response
+    except ClientError as e:
+        logger.error("Error invoking step function: %s", e)
+        raise
+
+
+def check_emr_step_status(step_id, cluster_id):
+    try:
+        response = emr_client.describe_step(ClusterId=cluster_id, StepId=step_id)
+        return response
+    except ClientError as e:
+        logger.error("EMR check step status for step id %s error: %s", step_id, e)
+        raise
+
+
+def get_spark_conf(dataset_name, bucket, key):
+    try:
+        data = s3_client.get_object(Bucket=bucket, Key=key)
+        content = json.loads(data['Body'].read().decode("utf-8"))
+        return content["spark_conf"]
+    except ClientError as e:
+        logger.error("Error fetching spark config: %s", e)
+        raise
+
+
+def get_cluster_id(cluster_name: str) -> str:
+    try:
+        logger.info("Getting cluster id for %s", cluster_name)
+        clusters = emr_client.list_clusters()
+        return next((c["Id"] for c in clusters["Clusters"] if c["Name"] == cluster_name), None)
+    except ClientError as e:
+        logger.error("Error while getting cluster id: %s", e)
+        raise
+
+
+def get_cluster_status(cluster_id):
+    try:
+        response = emr_client.describe_cluster(ClusterId=cluster_id)
+        return response["Cluster"]["Status"]["State"]
+    except ClientError as e:
+        logger.error("Error getting cluster status: %s", e)
+        raise
+
+
+def submit_new_step_to_cluster(dataset_name, snapshot_date, job_version, src_run_id_dict, cluster_name):
+    cluster_id = get_cluster_id(cluster_name)
+    if cluster_id:
+        bucket_key_path = CONFIG_PATH.split('/', 3)
+        bucket = bucket_key_path[2]
+
+        spark_conf = get_spark_conf(dataset_name, bucket, f"dias/ais/views script/view-phyzn-ldr/job config/{dataset_name}.json")
+        spark_conf_str = " ".join(spark_conf)
+
+        try:
+            name = f"view_phyz_{dataset_name}_{snapshot_date}"
+            script_location = SPARK_SCRIPT
+            step_args = [
+                'bash', '-c',
+                f"sudo rm -rf /mnt/tmp/ais_code_temp; mkdir /mnt/tmp/ais_code_temp; cd /mnt/tmp/ais_code_temp;"
+                f"aws s3 cp {EDE_UTILS_PATH} /mnt/tmp/ais_code_temp/; chmod +x bootstrap.sh; ./bootstrap.sh;"
+                f"spark-submit --deploy-mode client --master yarn {spark_conf_str} "
+                f"--py-files s3://{bucket}/dias/ais/views_script/view-phyzn-ldr/src/jobs/viewetl/env_constants.py "
+                f"{script_location} {dataset_name} {snapshot_date} {job_version} {src_run_id_dict} {ENV}"
+            ]
+
+            step_to_submit = {
+                "Name": name,
+                "ActionOnFailure": "CONTINUE",
+                "HadoopJarStep": {
+                    "Jar": "command-runner.jar",
+                    "Args": step_args
+                }
+            }
+
+            response = emr_client.add_job_flow_steps(JobFlowId=cluster_id, Steps=[step_to_submit])
+            response["job_version"] = job_version
+            return response
+        except ClientError as e:
+            logger.error("Error while running EMR job: %s", e)
+            raise
+    else:
+        logger.error("No Active cluster found for %s", cluster_name)
+        return -1
+
+
+def get_dependencies_from_dynamo(dataset_name, snapshot_date, audit_table, dep_dict):
+    items = audit_table.get_audit_record(dataset_name, snapshot_date)
+    if not items:
+        ver = audit_table.insert_audit_record(dataset_name, snapshot_date)
+        audit_table.update_audit_record(dataset_name, snapshot_date + ": " + ver, "dependencies", json.dumps(dep_dict))
+        up_response = audit_table.update_audit_record(dataset_name, snapshot_date + ": " + ver, "job_status", "WAITING")
+        return {"job_status": up_response["job_status"], "dependencies": dep_dict, "job_version": ver}
+    else:
+        latest_rec = max(items, key=lambda rec: int(rec["snapshot_date"].split(": ")[1]))
+        job_version = str(int(latest_rec["snapshot_date"].split(": ")[1]))
+
+        dependencies = json.loads(latest_rec["dependencies"])
+        if latest_rec["job_status"] == "WAITING":
+            for dep_job in dependencies:
+                if dependencies[dep_job] is None:
+                    dependencies[dep_job] = dep_dict[dep_job]
+            audit_table.update_audit_record(dataset_name, snapshot_date + ": " + job_version, "dependencies", json.dumps(dependencies))
+        else:
+            job_version = audit_table.insert_audit_record(dataset_name, snapshot_date)
+            up_response = audit_table.update_audit_record(dataset_name, snapshot_date + ": " + job_version, "job_status", "WAITING")
+            for dep_job in dependencies:
+                if dep_dict[dep_job] is not None:
+                    dependencies[dep_job] = dep_dict[dep_job]
+            audit_table.update_audit_record(dataset_name, snapshot_date + ": " + job_version, "dependencies", json.dumps(dependencies))
+        return {"job_status": up_response["job_status"], "dependencies": dependencies, "job_version": job_version}
+
+
+def get_src_run_id_for_dependency(dependent_job, snapshot_date, run_id, s3_path, job_audit_table):
+    jobs_dict = {}
+    bucket_key_path = CONFIG_PATH.split('/', 3)
+    bucket = bucket_key_path[2]
+    object_key = bucket_key_path[3] + VIEWS_CONFIG
+
+    job_conf = Jobconfigs3(bucket, object_key)
+    job_details = job_conf.getJobsByDependency(dependent_job)
+    if job_details:
+        for job_name in job_details:
+            job_dependencies = ast.literal_eval(str(job_conf.getDependenciesByJob(job_name)))
+            dep_dict = {"active": True}
+            for dependency in job_dependencies:
+                if dependency == dependent_job:
+                    dep_dict[dependency] = {"runId": run_id, "s3Path": s3_path}
+                else:
+                    dep_dict[dependency] = None
+            res = get_dependencies_from_dynamo(job_name, snapshot_date, job_audit_table, dep_dict)
+            jobs_dict[job_name] = res
+    return jobs_dict
+
+
+def lambda_handler(event, context):
+    logger.info("Received event: %s", json.dumps(event))
+    if event['Payload']['next_step'] == 'emr_job':
+        try:
+            dataset_name = event["Payload"]["job_name"]
+            snapshot_date = event["Payload"]["snapshot_date"]
+            job_version = event["Payload"]["job_version"]
+            dependencies = event["Payload"]["dependencies"]
+
+            job_audit_table = JobAuditTable('data_dstr_job_audit-dev')
+            response = submit_new_step_to_cluster(dataset_name, snapshot_date, job_version, dependencies, CLUSTER_NAME)
+
+            if response == -1:
+                job_audit_table.update_audit_record(dataset_name, snapshot_date + ": " + job_version, "description", f"Cluster Not found for {CLUSTER_NAME}")
+                return {"status": 404, "message": f"Cluster not found for {CLUSTER_NAME}"}
+            else:
+                step_id = response['StepIds'][0]
+                job_audit_table.update_audit_record(dataset_name, snapshot_date + ": " + job_version, "step_id", step_id)
+                return {"next_step": "check_job_status", "StepIds": [step_id], "Payload": event["Payload"]}
+        except Exception as e:
+            logger.error("Error in emr_job step: %s", e)
+            raise
+
+    elif event['Payload']['next_step'] == 'invoke_step_function':
+        dataset_name = event["Payload"]["job_name"]
+        snapshot_date = event["Payload"]["snapshot_date"]
+        edp_run_id = event["Payload"]["edp_run_id"]
+        refined_dataset_path = event["Payload"]["refined_dataset_path"]
+
+        job_audit_table = JobAuditTable('data_dstr_job_audit-dev')
+        job_list_dependencies_dict = get_src_run_id_for_dependency(dataset_name, snapshot_date, edp_run_id, refined_dataset_path, job_audit_table)
+        if job_list_dependencies_dict:
+            for view_job, view_dep in job_list_dependencies_dict.items():
+                job_name = view_job
+                if view_dep and view_dep["active"]:
+                    if view_dep["job_status"]["S"] == "DEPS_COMPLETE":
+                        dependencies = json.loads(view_dep["dependencies"])
+                        if None in dependencies.values():
+                            response = {"status": 200, "message": "Dependency job yet to run"}
+                            response.update(view_dep)
+                            return response
+                        attribute = "dependencies"
+                        up_response = job_audit_table.update_audit_record(job_name, snapshot_date + ": " + view_dep["job_version"], attribute, json.dumps(dependencies))
+                        job_version = up_response["snapshot_date"]["S"].split(": ")[1]
+                        sf_input = json.dumps({
+                            "job_name": job_name,
+                            "next_step": "emr_job",
+                            "snapshot_date": snapshot_date,
+                            "job_version": job_version,
+                            "dependencies": dependencies,
+                            "aws_account": ANS_ACCOUNT
+                        })
+                        invoke_step_function(f"arn:aws:states:us-east-1:{ANS_ACCOUNT}:stateMachine:{STEP_FUNCTION_NAME}", sf_input)
+                    else:
+                        job_audit_table.update_audit_record(event['job_name'], event['snapshot_date'] + ": " + event['job_version'], "step_id", response["stepIds"][0])
+                        response = {
+                            "next_step": "check_job_status",
+                            "job_name": event['job_name'],
+                            "snapshot_date": event['snapshot_date'],
+                            "job_version": event['job_version'],
+                            "aws_account": ANS_ACCOUNT
+                        }
+                        return response
+                else:
+                    job_audit_table.update_audit_record(event['job_name'], event['snapshot_date'] + ": " + event['job_version'], "description", f"Cluster Not found for {CLUSTER_NAME}")
+        else:
+            response = {"status": 200, "message": "No job dependencies found"}
+            return response
+
+    elif event['Payload']['next_step'] == 'check_job_status':
+        emr_step_id = event['Payload']['StepIds'][0]
+        cluster_id = get_cluster_id(CLUSTER_NAME)
+        response = check_emr_step_status(emr_step_id, cluster_id)
+        job_status = response['Step']['Status']['State']
+        res = {
+            "job_name": event['Payload']['job_name'],
+            "snapshot_date": event['Payload']['snapshot_date'],
+            "job_version": event['Payload']['job_version'],
+            "aws_account": ANS_ACCOUNT
+        }
+        if job_status == 'COMPLETED':
+            res["job_status"] = 'COMPLETED'
+            job_audit_table.update_audit_record(event['Payload']['job_name'], event['Payload']['snapshot_date'] + ": " + event['Payload']['job_version'], "job_status", "COMPLETED")
+        elif job_status == 'FAILED':
+            res["job_status"] = 'FAILED'
+            job_audit_table.update_audit_record(event['Payload']['job_name'], event['Payload']['snapshot_date'] + ": " + event['Payload']['job_version'], "job_status", "FAILED")
+        else:
+            if job_status in ['RUNNING', 'PENDING']:
+                res['job_status'] = job_status
+                res['next_step'] = "check_job_status"
+                res['StepIds'] = [emr_step_id]
+        return res

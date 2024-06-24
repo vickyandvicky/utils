@@ -1,0 +1,125 @@
+import unittest
+from unittest.mock import patch, MagicMock
+from moto import mock_emr, mock_s3, mock_dynamodb2, mock_stepfunctions
+import boto3
+import json
+
+# Mock constants
+EDP_RUN_API = "mock_api"
+CONFIG_PATH = "s3://mock-bucket/config/"
+SPARK_SCRIPT = "s3://mock-bucket/scripts/viewdist.py"
+STEP_FUNCTION_NAME = "mock_step_function"
+ANS_ACCOUNT = "123456789012"
+CLUSTER_NAME = "mock_cluster"
+VIEWS_CONFIG = "mock_views_config"
+ENV = "test"
+EDE_UTILS_PATH = "s3://mock-bucket/utils/bootstrap.sh"
+
+# Sample event for lambda handler
+sample_event = {
+    "Payload": {
+        "next_step": "emr_job",
+        "job_name": "sample_job",
+        "snapshot_date": "2023-06-07",
+        "job_version": "1",
+        "dependencies": {}
+    }
+}
+
+@mock_emr
+@mock_s3
+@mock_dynamodb2
+@mock_stepfunctions
+class TestOptimizedCode(unittest.TestCase):
+
+    def setUp(self):
+        self.emr_client = boto3.client('emr', region_name='us-east-1')
+        self.s3_client = boto3.client('s3', region_name='us-east-1')
+        self.dynamodb_client = boto3.client('dynamodb', region_name='us-east-1')
+        self.sfn_client = boto3.client('stepfunctions', region_name='us-east-1')
+
+        # Create mock S3 bucket
+        self.s3_client.create_bucket(Bucket='mock-bucket')
+        self.s3_client.put_object(Bucket='mock-bucket', Key='config/sample_job.json', Body=json.dumps({"spark_conf": ["--conf", "spark.executor.memory=2g"]}))
+        self.s3_client.put_object(Bucket='mock-bucket', Key='scripts/viewdist.py', Body="print('hello world')")
+        self.s3_client.put_object(Bucket='mock-bucket', Key='utils/bootstrap.sh', Body="echo 'bootstrap'")
+
+        # Create mock DynamoDB table
+        self.dynamodb_client.create_table(
+            TableName='data_dstr_job_audit-dev',
+            KeySchema=[
+                {'AttributeName': 'job_name', 'KeyType': 'HASH'},
+                {'AttributeName': 'snapshot_date', 'KeyType': 'RANGE'}
+            ],
+            AttributeDefinitions=[
+                {'AttributeName': 'job_name', 'AttributeType': 'S'},
+                {'AttributeName': 'snapshot_date', 'AttributeType': 'S'}
+            ],
+            ProvisionedThroughput={'ReadCapacityUnits': 1, 'WriteCapacityUnits': 1}
+        )
+
+        # Create mock Step Function
+        self.sfn_client.create_state_machine(
+            name=STEP_FUNCTION_NAME,
+            definition=json.dumps({
+                "StartAt": "InitialState",
+                "States": {
+                    "InitialState": {
+                        "Type": "Pass",
+                        "End": True
+                    }
+                }
+            }),
+            roleArn="arn:aws:iam::123456789012:role/service-role/MyRole"
+        )
+
+        # Create mock EMR cluster
+        self.emr_client.run_job_flow(
+            Name=CLUSTER_NAME,
+            Instances={
+                'InstanceCount': 3,
+                'MasterInstanceType': 'm4.large',
+                'SlaveInstanceType': 'm4.large',
+                'TerminationProtected': False,
+                'KeepJobFlowAliveWhenNoSteps': True
+            },
+            JobFlowRole='EMR_EC2_DefaultRole',
+            ServiceRole='EMR_DefaultRole',
+            VisibleToAllUsers=True
+        )
+
+    @patch('your_module.invoke_step_function')
+    def test_invoke_step_function_success(self, mock_invoke_step_function):
+        mock_invoke_step_function.return_value = {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:mock_step_function:execution'}
+        response = invoke_step_function("arn:aws:states:us-east-1:123456789012:stateMachine:mock_step_function", json.dumps(sample_event['Payload']))
+        self.assertIn('executionArn', response)
+
+    @patch('your_module.invoke_step_function')
+    def test_invoke_step_function_error(self, mock_invoke_step_function):
+        mock_invoke_step_function.side_effect = Exception("Mock exception")
+        with self.assertRaises(Exception):
+            invoke_step_function("arn:aws:states:us-east-1:123456789012:stateMachine:mock_step_function", json.dumps(sample_event['Payload']))
+
+    def test_get_spark_conf_success(self):
+        spark_conf = get_spark_conf("sample_job", "mock-bucket", "config/sample_job.json")
+        self.assertEqual(spark_conf, ["--conf", "spark.executor.memory=2g"])
+
+    def test_submit_new_step_to_cluster_success(self):
+        response = submit_new_step_to_cluster("sample_job", "2023-06-07", "1", {}, CLUSTER_NAME)
+        self.assertIn('StepIds', response)
+
+    def test_submit_new_step_to_cluster_no_cluster(self):
+        response = submit_new_step_to_cluster("sample_job", "2023-06-07", "1", {}, "non_existing_cluster")
+        self.assertEqual(response, -1)
+
+    def test_lambda_handler_emr_job(self):
+        with patch('your_module.get_cluster_id', return_value='j-1234567890'):
+            with patch('your_module.submit_new_step_to_cluster', return_value={'StepIds': ['s-1234567890']}):
+                response = lambda_handler(sample_event, None)
+                self.assertIn('next_step', response)
+                self.assertEqual(response['next_step'], 'check_job_status')
+
+    # Additional tests for other cases...
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from botocore.stub import Stubber
+import boto3
 import json
 from botocore.exceptions import ClientError
 import handler  # Replace with the actual module name where the functions are defined
@@ -8,20 +9,28 @@ import handler  # Replace with the actual module name where the functions are de
 class TestHandlerWithStubber(unittest.TestCase):
 
     @patch('handler.boto3.client')
-    def test_get_boto_clients_emr(self, mock_boto_client):
+    def test_get_boto_clients(self, mock_boto_client):
+        # Mock boto3 clients
         emr_client = boto3.client('emr')
-        mock_boto_client.return_value = emr_client
-        
-        with Stubber(emr_client) as stubber:
-            stubber.add_response('list_clusters', {'Clusters': []})
-            
-            client = handler.get_boto_clients('emr_client')
-            response = client.list_clusters()
-            
-            self.assertEqual(response['Clusters'], [])
+        s3_client = boto3.client('s3')
+        sf_client = boto3.client('stepfunctions')
+
+        mock_boto_client.side_effect = [emr_client, s3_client, sf_client]
+
+        # Test emr_client
+        client = handler.get_boto_clients('emr_client')
+        self.assertEqual(client, emr_client)
+
+        # Test s3_client
+        client = handler.get_boto_clients('s3_client')
+        self.assertEqual(client, s3_client)
+
+        # Test sf_client
+        client = handler.get_boto_clients('sf_client')
+        self.assertEqual(client, sf_client)
 
     @patch('handler.boto3.client')
-    def test_invoke_step_function_success(self, mock_boto_client):
+    def test_invoke_step_function(self, mock_boto_client):
         sf_client = boto3.client('stepfunctions')
         mock_boto_client.return_value = sf_client
         
@@ -45,7 +54,7 @@ class TestHandlerWithStubber(unittest.TestCase):
             self.assertEqual(response, expected_response)
 
     @patch('handler.boto3.client')
-    def test_check_emr_step_status_success(self, mock_boto_client):
+    def test_check_emr_step_status(self, mock_boto_client):
         emr_client = boto3.client('emr')
         mock_boto_client.return_value = emr_client
         
@@ -64,7 +73,7 @@ class TestHandlerWithStubber(unittest.TestCase):
             self.assertEqual(response, expected_response)
 
     @patch('handler.boto3.client')
-    def test_get_spark_conf_success(self, mock_boto_client):
+    def test_get_spark_conf(self, mock_boto_client):
         s3_client = boto3.client('s3')
         mock_boto_client.return_value = s3_client
         
@@ -80,7 +89,7 @@ class TestHandlerWithStubber(unittest.TestCase):
             self.assertEqual(response, ["conf1", "conf2"])
 
     @patch('handler.boto3.client')
-    def test_get_cluster_id_success(self, mock_boto_client):
+    def test_get_cluster_id(self, mock_boto_client):
         emr_client = boto3.client('emr')
         mock_boto_client.return_value = emr_client
         
@@ -96,6 +105,60 @@ class TestHandlerWithStubber(unittest.TestCase):
             response = handler.get_cluster_id('cluster_name')
             
             self.assertEqual(response, "cluster_id_1")
+
+    @patch('handler.boto3.client')
+    def test_get_cluster_status(self, mock_boto_client):
+        emr_client = boto3.client('emr')
+        mock_boto_client.return_value = emr_client
+        
+        with Stubber(emr_client) as stubber:
+            cluster_status = {
+                "Cluster": {
+                    "Status": {
+                        "State": "RUNNING"
+                    }
+                }
+            }
+            stubber.add_response('describe_cluster', cluster_status)
+            
+            response = handler.get_cluster_status('cluster_id')
+            
+            self.assertEqual(response, "RUNNING")
+
+    @patch('handler.boto3.client')
+    def test_submit_new_step_to_cluster(self, mock_boto_client):
+        emr_client = boto3.client('emr')
+        s3_client = boto3.client('s3')
+        mock_boto_client.side_effect = [emr_client, s3_client]
+
+        with Stubber(emr_client) as emr_stubber, Stubber(s3_client) as s3_stubber:
+            # Mock get_cluster_id
+            clusters = {
+                "Clusters": [
+                    {"Id": "cluster_id", "Name": "cluster_name"}
+                ]
+            }
+            emr_stubber.add_response('list_clusters', clusters)
+
+            # Mock get_spark_conf
+            spark_conf = {"spark_conf": ["conf1", "conf2"]}
+            s3_stubber.add_response('get_object', {
+                "Body": MagicMock(read=MagicMock(return_value=json.dumps(spark_conf).encode('utf-8')))
+            })
+
+            # Mock add_job_flow_steps
+            emr_stubber.add_response('add_job_flow_steps', {
+                "StepIds": ["step_id"]
+            })
+
+            os.environ["SPARK_SCRIPT"] = "spark_script"
+            os.environ["ENVIRONMENT"] = "env"
+            os.environ["EDP_UTILS_PATH"] = "edp_utils_path"
+
+            sre_run_id_dict = {"some_key": "some_value"}
+            response = handler.submit_new_step_to_cluster('dataset_name', '2023-01-01', '1', sre_run_id_dict, 'cluster_name')
+            
+            self.assertEqual(response["StepIds"][0], "step_id")
 
 if __name__ == '__main__':
     unittest.main()

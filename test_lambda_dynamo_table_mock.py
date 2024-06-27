@@ -1,0 +1,210 @@
+import unittest
+from unittest.mock import patch, MagicMock
+from botocore.stub import Stubber
+import boto3
+import os
+import json
+from moto import mock_dynamodb2
+
+from your_module import (
+    get_boto_clients, invoke_step_function, check_emr_step_status,
+    get_spark_conf, get_cluster_id, get_cluster_status,
+    submit_new_step_to_cluster, get_dependencies_from_dynamo,
+    get_src_run_id_for_dependency, execute
+)
+
+@mock_dynamodb2
+class TestYourModule(unittest.TestCase):
+
+    def setUp(self):
+        # Set up the DynamoDB table
+        self.dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
+        self.table_name = 'data_dstr_job_audit'
+        self.table = self.dynamodb.create_table(
+            TableName=self.table_name,
+            KeySchema=[
+                {
+                    'AttributeName': 'dataset_name',
+                    'KeyType': 'HASH'
+                },
+                {
+                    'AttributeName': 'snapshot_date',
+                    'KeyType': 'RANGE'
+                }
+            ],
+            AttributeDefinitions=[
+                {
+                    'AttributeName': 'dataset_name',
+                    'AttributeType': 'S'
+                },
+                {
+                    'AttributeName': 'snapshot_date',
+                    'AttributeType': 'S'
+                }
+            ],
+            ProvisionedThroughput={
+                'ReadCapacityUnits': 5,
+                'WriteCapacityUnits': 5
+            }
+        )
+        self.table.wait_until_exists()
+
+    @patch('your_module.boto3.client')
+    def test_get_boto_clients(self, mock_boto_client):
+        emr_client = MagicMock()
+        s3_client = MagicMock()
+        sf_client = MagicMock()
+        mock_boto_client.side_effect = [emr_client, s3_client, sf_client]
+        
+        self.assertEqual(get_boto_clients("emr_client"), emr_client)
+        self.assertEqual(get_boto_clients("s3_client"), s3_client)
+        self.assertEqual(get_boto_clients("sf_client"), sf_client)
+        mock_boto_client.assert_any_call('emr', region_name='us-east-1', endpoint_url="https://elasticmapreduce.us-east-1.amazonaws.com")
+        mock_boto_client.assert_any_call('s3')
+        mock_boto_client.assert_any_call('stepfunctions')
+
+    def test_invoke_step_function(self):
+        step_function_arn = 'arn:aws:states:us-east-1:123456789012:stateMachine:testStateMachine'
+        step_function_input = json.dumps({
+            'job_name': 'test_job',
+            'snapshot_date': '2022-01-01',
+            'job_version': '1'
+        })
+        
+        sf_client = get_boto_clients("sf_client")
+        with Stubber(sf_client) as stubber:
+            expected_params = {
+                'stateMachineArn': step_function_arn,
+                'input': step_function_input,
+                'name': 'test_job_2022-01-01_1'
+            }
+            stubber.add_response('start_execution', {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'}, expected_params)
+
+            response = invoke_step_function(step_function_arn, step_function_input)
+            self.assertEqual(response, {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'})
+
+    def test_check_emr_step_status(self):
+        step_id = 'step-12345'
+        cluster_id = 'j-12345'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {'ClusterId': cluster_id, 'StepId': step_id}
+            response_body = {'Step': {'Status': {'State': 'COMPLETED'}}}
+            stubber.add_response('describe_step', response_body, expected_params)
+
+            response = check_emr_step_status(step_id, cluster_id)
+            self.assertEqual(response, response_body)
+
+    def test_get_spark_conf(self):
+        bucket = 'test-bucket'
+        key = 'test-key'
+        
+        s3_client = get_boto_clients("s3_client")
+        with Stubber(s3_client) as stubber:
+            expected_params = {'Bucket': bucket, 'Key': key}
+            response_body = {'Body': MagicMock(read=MagicMock(return_value=json.dumps({'spark_conf': ['conf1', 'conf2']})))}
+            stubber.add_response('get_object', response_body, expected_params)
+
+            response = get_spark_conf('dataset_name', bucket, key)
+            self.assertEqual(response, ['conf1', 'conf2'])
+
+    def test_get_cluster_id(self):
+        cluster_name = 'test-cluster'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {}
+            response_body = {'Clusters': [{'Id': 'j-12345', 'Name': cluster_name}]}
+            stubber.add_response('list_clusters', response_body, expected_params)
+
+            response = get_cluster_id(cluster_name)
+            self.assertEqual(response, 'j-12345')
+
+    def test_get_cluster_status(self):
+        cluster_id = 'j-12345'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {'ClusterId': cluster_id}
+            response_body = {'Cluster': {'Status': {'State': 'RUNNING'}}}
+            stubber.add_response('describe_cluster', response_body, expected_params)
+
+            response = get_cluster_status(cluster_id)
+            self.assertEqual(response, 'RUNNING')
+
+    @patch('your_module.get_spark_conf')
+    @patch('your_module.get_cluster_id')
+    def test_submit_new_step_to_cluster(self, mock_get_cluster_id, mock_get_spark_conf):
+        mock_get_cluster_id.return_value = 'j-12345'
+        mock_get_spark_conf.return_value = ['--conf1', '--conf2']
+
+        os.environ["CONFIG_PATH"] = "s3://bucket/path"
+        os.environ["SPARK_SCRIPT"] = "s3://bucket/script.py"
+        os.environ["ENVIRONMENT"] = "test-env"
+        os.environ["EDP_UTILS_PATH"] = "s3://bucket/bootstrap.sh"
+
+        dataset_name = 'dataset_name'
+        snapshot_date = '2022-01-01'
+        job_version = '1'
+        sre_run_id_dict = {}
+        cluster_name = 'test-cluster'
+
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {
+                'JobFlowId': 'j-12345',
+                'Steps': [{
+                    'Name': 'EMR Step for dataset_name 1',
+                    'ActionOnFailure': 'CONTINUE',
+                    'HadoopJarStep': {
+                        'Jar': 'command-runner.jar',
+                        'Args': [
+                            'spark-submit', '--conf1', '--conf2', 's3://bucket/script.py',
+                            '--config_path', 's3://bucket/path',
+                            '--dataset', dataset_name,
+                            '--snapshot_date', snapshot_date,
+                            '--job_version', job_version
+                        ]
+                    }
+                }]
+            }
+            response_body = {'StepIds': ['step-12345']}
+            stubber.add_response('add_job_flow_steps', response_body, expected_params)
+
+            response = submit_new_step_to_cluster(dataset_name, snapshot_date, job_version, sre_run_id_dict, cluster_name)
+            self.assertEqual(response['StepIds'], ['step-12345'])
+            self.assertEqual(response['job_version'], job_version)
+
+    @patch('your_module.JobAuditTable')
+    def test_get_dependencies_from_dynamo(self, MockJobAuditTable):
+        mock_table = MockJobAuditTable.return_value
+        mock_table.get_audit_record.return_value = None
+
+        dataset_name = 'dataset_name'
+        snapshot_date = '2022-01-01'
+        audit_table = MockJobAuditTable(self.table_name)
+        dep_dict = {}
+
+        response = get_dependencies_from_dynamo(dataset_name, snapshot_date, audit_table, dep_dict)
+        self.assertEqual(response['job_status'], 'DISABLED')
+
+    @patch('your_module.JobAuditTable')
+    def test_get_src_run_id_for_dependency(self, MockJobAuditTable):
+        mock_table = MockJobAuditTable.return_value
+        mock_table.get_audit_record.return_value = None
+
+        dataset_name = 'dataset_name'
+        snapshot_date = '2022-01-01'
+        run_id = 'run-12345'
+        s3_path = 's3://bucket/path'
+        job_audit_table = MockJobAuditTable(self.table_name)
+
+        os.environ["CONFIG_PATH"] = "s3://bucket/path"
+        os.environ["VIEWS_CONFIG"] = "views_config.json"
+
+        response = get_src_run_id_for_dependency(dataset_name, snapshot_date, run_id, s3_path, job_audit_table)
+        self.assertEqual(response, {})
+
+if __name__ == '__main__':
+    unittest.main()

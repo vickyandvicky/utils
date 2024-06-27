@@ -1,65 +1,50 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import json
-from your_module import execute, JobAuditTable
-
-class TestYourModule(unittest.TestCase):
-    def setUp(self):
-        self.event = {
-            'Records': [{
-                'body': json.dumps({
-                    'Message': json.dumps({
-                        'task_configuration': {
-                            'parsed_datasets': [{'refined_dataset_path': 's3://bucket/path'}],
-                            'job_params': {
-                                'edp_run_id': '1234',
-                                'output_datasets': ['testJob']
-                            },
-                            'job_info': {'SNAPSHOT_DATE': '2023-01-01'}
-                        }
-                    })
-                })
-            }]
+@patch('your_module.invoke_step_function')
+@patch('your_module.get_src_run_id_for_dependency')
+@patch('your_module.JobAuditTable')
+@patch.dict('os.environ', {
+    'AWS_ACCOUNT': '123456789012',
+    'CLUSTER_NAME': 'test-cluster',
+    'CONFIG_PATH': 's3://bucket/config',
+    'SPARK_SCRIPT': 's3://bucket/script.py',
+    'ENVIRONMENT': 'test',
+    'EDP_UTILS_PATH': 's3://bucket/bootstrap.sh',
+    'STEPFUNCTION_NAME': 'test-step-function'
+})
+def test_execute_with_records(self, mock_job_audit_table, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
+    mock_audit_table_instance = mock_job_audit_table.return_value
+    job_audit_table = mock_audit_table_instance
+    
+    mock_get_src_run_id_for_dependency.return_value = {
+        'job1': {
+            'job_status': {'S': 'DISABLED'},
+            'dependencies': {'dep1': {'runId': '123', 's3Path': 's3://path'}}
         }
-        self.context = {}
-        
-        # Patch the environment variables
-        self.env_patcher = patch.dict('os.environ', {
-            'AWS_ACCOUNT': '123456789012',
-            'CLUSTER_NAME': 'test-cluster',
-            'CONFIG_PATH': 's3://bucket/config/path',
-            'VIEWS_CONFIG': 'views_config.json',
-            'STEPFUNCTION_NAME': 'test-step-function',
-            'SPARK_SCRIPT': 's3://bucket/spark/script.py',
-            'ENVIRONMENT': 'test',
-            'EDP_UTILS_PATH': 's3://bucket/edp/utils/path'
-        })
-        self.env_patcher.start()
-        self.addCleanup(self.env_patcher.stop)
-        
-        # Patch the JobAuditTable methods
-        self.job_audit_table_patcher = patch('your_module.JobAuditTable', autospec=True)
-        self.mock_job_audit_table = self.job_audit_table_patcher.start()
-        self.addCleanup(self.job_audit_table_patcher.stop)
-        
-        self.mock_job_audit_table_instance = self.mock_job_audit_table.return_value
-        self.mock_job_audit_table_instance.get_audit_record_by_version.side_effect = [
-            {"job_name": "dependencyJob", "snapshot_date": "2023-01-01:1", "job_status": "DISABLED"}
-        ]
-        self.mock_job_audit_table_instance.insert_audit_record.return_value = '1'
-        self.mock_job_audit_table_instance.update_audit_record.return_value = {"job_status": "DISABLED"}
+    }
+    
+    event = {
+        'Records': [{
+            'body': json.dumps({
+                'Message': json.dumps({
+                    'task_configuration': {
+                        'parsed_datasets': [{'refined_dataset_path': 's3://path'}],
+                        'job_params': {'edp_run_id': 'runId', 'output_datasets': ['dataset_name']},
+                        'job_info': {'SNAPSHOT_DATE': '20230101'}
+                    }
+                })
+            })
+        }]
+    }
+    context = {}
 
-    def test_execute_with_records(self):
-        with patch('your_module.invoke_step_function') as mock_invoke_step_function:
-            # Execute the method
-            response = execute(self.event, self.context)
+    response = execute(event, context)
+    
+    self.assertEqual(response['status'], 200)
+    self.assertIn('message', response)
+    self.assertEqual(response['message'], 'Job disabled job1')
 
-            # Validate response and mock calls
-            self.assertEqual(response, {"status": 200, "message": "Job disabled testJob"})
-            self.mock_job_audit_table_instance.get_audit_record_by_version.assert_called_with(
-                "testJob", "2023-01-01", "1"
-            )
-            mock_invoke_step_function.assert_not_called()
+    mock_get_src_run_id_for_dependency.assert_called_once()
+    mock_invoke_step_function.assert_not_called()
 
+# Add the new test case to the test suite
 if __name__ == '__main__':
     unittest.main()

@@ -18,8 +18,8 @@ class TestExecuteFunction(unittest.TestCase):
         'STEPFUNCTION_NAME': 'test-step-function'
     })
     def test_execute_with_records(self, mock_job_audit_table, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
-        mock_audit_table_instance = mock_job_audit_table.return_value
-        job_audit_table = mock_audit_table_instance
+        mock_audit_table_instance = MagicMock()
+        mock_job_audit_table.return_value = mock_audit_table_instance
         
         mock_get_src_run_id_for_dependency.return_value = {
             'job1': {

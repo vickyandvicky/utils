@@ -18,6 +18,7 @@ class TestExecuteFunction(unittest.TestCase):
     })
     def test_execute_with_records(self, mock_job_audit_table, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
         mock_audit_table_instance = MagicMock()
+        mock_audit_table_instance.update_audit_record.return_value = {"job_status": "DISABLED"}
         mock_job_audit_table.return_value = mock_audit_table_instance
         
         # Mock return value for get_src_run_id_for_dependency

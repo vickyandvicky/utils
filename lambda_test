@@ -120,7 +120,7 @@ class TestHandlerWithStubber(unittest.TestCase):
 
                 self.assertEqual(response, "RUNNING")
 
-@patch('handler.get_cluster_id')
+    @patch('handler.get_cluster_id')
     @patch('handler.get_spark_conf')
     @patch('handler.get_boto_clients')
     def test_submit_new_step_to_cluster(self, mock_get_boto_clients, mock_get_spark_conf, mock_get_cluster_id):
@@ -162,6 +162,143 @@ class TestHandlerWithStubber(unittest.TestCase):
         result = handler.submit_new_step_to_cluster('dataset_name', '2023-01-01', '1', sre_run_id_dict, 'cluster_name')
 
         self.assertEqual(result, -1)
+
+from your_module import get_dependencies_from_dynamo, get_src_run_id_for_dependency, execute
+
+class TestYourModule(unittest.TestCase):
+
+    @patch('your_module.JobAuditTable')
+    def test_get_dependencies_from_dynamo_no_dep_dict(self, MockJobAuditTable):
+        mock_audit_table = MockJobAuditTable.return_value
+        mock_audit_table.insert_audit_record.return_value = 'ver1'
+        mock_audit_table.update_audit_record.return_value = {'job_status': 'DISABLED'}
+
+        result = get_dependencies_from_dynamo('dataset1', '2022-01-01', mock_audit_table, None)
+
+        self.assertEqual(result, {'job_version': 'ver1', 'job_status': 'DISABLED'})
+        mock_audit_table.insert_audit_record.assert_called_once_with('dataset1', '2022-01-01')
+        mock_audit_table.update_audit_record.assert_called_once_with('dataset1', '2022-01-01', 'ver1', 'job_status', 'DISABLED')
+
+    @patch('your_module.JobAuditTable')
+    def test_get_dependencies_from_dynamo_with_dep_dict_no_items(self, MockJobAuditTable):
+        mock_audit_table = MockJobAuditTable.return_value
+        mock_audit_table.get_audit_record.return_value = []
+        mock_audit_table.insert_audit_record.return_value = 'ver1'
+        mock_audit_table.update_audit_record.return_value = {'job_status': 'WAITING'}
+
+        result = get_dependencies_from_dynamo('dataset1', '2022-01-01', mock_audit_table, {'dep1': None})
+
+        self.assertEqual(result, {'job_status': 'WAITING', 'dependencies': {'dep1': None}, 'job_version': 'ver1'})
+        mock_audit_table.get_audit_record.assert_called_once_with('dataset1', '2022-01-01')
+        mock_audit_table.insert_audit_record.assert_called_once_with('dataset1', '2022-01-01')
+        mock_audit_table.update_audit_record.assert_called_with('dataset1', '2022-01-01:ver1', 'dependencies', json.dumps({'dep1': None}))
+
+    @patch('your_module.JobAuditTable')
+    def test_get_dependencies_from_dynamo_with_existing_items(self, MockJobAuditTable):
+        mock_audit_table = MockJobAuditTable.return_value
+        existing_records = [
+            {'snapshot_date': '2022-01-01:1', 'dependencies': json.dumps({'dep1': None}), 'job_status': 'WAITING'}
+        ]
+        mock_audit_table.get_audit_record.return_value = existing_records
+        mock_audit_table.get_audit_record_by_version.return_value = {'snapshot_date': '2022-01-01:2'}
+        mock_audit_table.update_audit_record.side_effect = lambda *args, **kwargs: {'job_status': 'DEPS_COMPLETE'}
+
+        result = get_dependencies_from_dynamo('dataset1', '2022-01-01', mock_audit_table, {'dep1': 'completed'})
+
+        self.assertEqual(result['job_version'], '2')
+        self.assertEqual(result['job_status'], 'DEPS_COMPLETE')
+        mock_audit_table.update_audit_record.assert_any_call('dataset1', '2022-01-01:2', 'dependencies', json.dumps({'dep1': 'completed'}))
+        mock_audit_table.get_audit_record_by_version.assert_called_once_with('dataset1', '2022-01-01', '2')
+
+    @patch('your_module.JobConfigs3')
+    @patch('your_module.get_dependencies_from_dynamo')
+    @patch.dict(os.environ, {"CONFIG_PATH": "s3://bucket/path", "VIEWS_CONFIG": "/views/config"})
+    def test_get_src_run_id_for_dependency(self, mock_get_dependencies_from_dynamo, MockJobConfigs3):
+        mock_job_conf = MockJobConfigs3.return_value
+        mock_job_conf.getJobsByDependency.return_value = ['job1']
+        mock_job_conf.getDependenciesByJob.return_value = "{'dep1': 'dep_val'}"
+        mock_get_dependencies_from_dynamo.return_value = {'job_status': 'DEPS_COMPLETE'}
+
+        result = get_src_run_id_for_dependency('dep1', '2022-01-01', 'run1', 's3://bucket/path', MagicMock())
+
+        self.assertEqual(result, {'job1': {'job_status': 'DEPS_COMPLETE'}})
+        mock_get_dependencies_from_dynamo.assert_called_once_with('job1', '2022-01-01', unittest.mock.ANY, {'dep1': {'runId': 'run1', 's3Path': 's3://bucket/path'}, 'dep1': None})
+
+    @patch('your_module.invoke_step_function')
+    @patch('your_module.get_src_run_id_for_dependency')
+    @patch('your_module.JobAuditTable')
+    @patch.dict(os.environ, {"AWS_ACCOUNT": "123456789012", "CLUSTER_NAME": "test-cluster", "STEPFUNCTION_NAME": "test-step-function"})
+    def test_execute_with_records(self, MockJobAuditTable, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
+        mock_event = {
+            'Records': [{
+                'body': json.dumps({
+                    'Message': json.dumps({
+                        'task_configuration': {
+                            'parsed_datasets': [{'refined_dataset_path': 's3://bucket/path'}],
+                            'job_params': {
+                                'edp_run_id': 'run1',
+                                'output_datasets': ['dataset1']
+                            },
+                            'job_info': {'SNAPSHOT_DATE': '2022-01-01'}
+                        }
+                    })
+                })
+            }]
+        }
+        mock_get_src_run_id_for_dependency.return_value = {'job1': {'job_status': 'DEPS_COMPLETE', 'dependencies': json.dumps({'dep1': 'completed'})}}
+
+        result = execute(mock_event, MagicMock())
+
+        self.assertEqual(result['status'], 200)
+        self.assertIn('message', result)
+        mock_invoke_step_function.assert_called_once()
+        mock_get_src_run_id_for_dependency.assert_called_once_with('dataset1', '2022-01-01', 'run1', 's3://bucket/path', unittest.mock.ANY)
+
+    @patch('your_module.submit_new_step_to_cluster')
+    @patch('your_module.JobAuditTable')
+    @patch.dict(os.environ, {"AWS_ACCOUNT": "123456789012", "CLUSTER_NAME": "test-cluster"})
+    def test_execute_with_emr_job(self, MockJobAuditTable, mock_submit_new_step_to_cluster):
+        mock_event = {
+            'next_step': 'emr_job',
+            'job_name': 'dataset1',
+            'snapshot_date': '2022-01-01',
+            'job_version': '1',
+            'dependencies': {'dep1': 'completed'}
+        }
+        mock_submit_new_step_to_cluster.return_value = {'StepIds': ['step1']}
+
+        result = execute(mock_event, MagicMock())
+
+        self.assertEqual(result['next_step'], 'check_job_status')
+        self.assertEqual(result['job_name'], 'dataset1')
+        self.assertEqual(result['snapshot_date'], '2022-01-01')
+        self.assertEqual(result['job_version'], '1')
+        self.assertEqual(result['aws_account'], '123456789012')
+        MockJobAuditTable.return_value.update_audit_record.assert_any_call('dataset1', '2022-01-01:1', 'step_id', 'step1')
+
+    @patch('your_module.check_emr_step_status')
+    @patch('your_module.get_cluster_id')
+    @patch('your_module.JobAuditTable')
+    @patch.dict(os.environ, {"AWS_ACCOUNT": "123456789012", "CLUSTER_NAME": "test-cluster"})
+    def test_execute_check_job_status(self, MockJobAuditTable, mock_get_cluster_id, mock_check_emr_step_status):
+        mock_event = {
+            'Payload': {
+                'next_step': 'check_job_status',
+                'StepIds': ['step1'],
+                'job_name': 'dataset1',
+                'snapshot_date': '2022-01-01',
+                'job_version': '1'
+            }
+        }
+        mock_get_cluster_id.return_value = 'cluster1'
+        mock_check_emr_step_status.return_value = {'Step': {'Status': {'State': 'COMPLETED'}}}
+
+        result = execute(mock_event, MagicMock())
+
+        self.assertEqual(result['job_status'], 'COMPLETED')
+        self.assertEqual(result['check_job_status']['job_name'], 'dataset1')
+        MockJobAuditTable.return_value.update_audit_record.assert_any_call('dataset1', '2022-01-01:1', 'job_status', 'COMPLETED')
+
 
 
 if __name__ == '__main__':

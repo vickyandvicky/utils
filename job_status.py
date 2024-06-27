@@ -1,12 +1,27 @@
 import json
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from your_module import execute  # Replace 'your_module' with the actual module name
 
+# Simplified mock class for JobAuditTable
+class MockJobAuditTable:
+    def __init__(self, table_name):
+        self.table_name = table_name
+    
+    def update_audit_record(self, dataset_name, snapshot_date, job_version, attribute, value):
+        # Simplified mock implementation, returns a dictionary
+        if attribute == "job_status":
+            return {"job_status": value}
+        elif attribute == "description":
+            return {"description": value}
+        else:
+            return {"default": "mocked"}
+
+# Unit test class
 class TestExecuteFunction(unittest.TestCase):
     @patch('your_module.invoke_step_function')
     @patch('your_module.get_src_run_id_for_dependency')
-    @patch('your_module.JobAuditTable')
+    @patch('your_module.JobAuditTable', MockJobAuditTable)  # Use the simplified mock class
     @patch.dict('os.environ', {
         'AWS_ACCOUNT': '123456789012',
         'CLUSTER_NAME': 'test-cluster',
@@ -16,21 +31,15 @@ class TestExecuteFunction(unittest.TestCase):
         'EDP_UTILS_PATH': 's3://bucket/bootstrap.sh',
         'STEPFUNCTION_NAME': 'test-step-function'
     })
-    def test_execute_with_records(self, mock_job_audit_table, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
-        # Mock audit table instance and its methods
-        mock_audit_table_instance = MagicMock()
-        mock_audit_table_instance.update_audit_record.return_value = {"job_status": {"S": "DISABLED"}}  # Ensure correct format
-        mock_job_audit_table.return_value = mock_audit_table_instance
-        
-        # Mock return value for get_src_run_id_for_dependency
+    def test_execute_with_records(self, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
         mock_get_src_run_id_for_dependency.return_value = {
             'job1': {
-                'job_status': {'S': 'DISABLED'},
+                'job_status': 'DISABLED',
                 'dependencies': json.dumps({'dep1': {'runId': '123', 's3Path': 's3://path'}}),
                 'job_version': '1'
             }
         }
-        
+
         event = {
             'Records': [{
                 'body': json.dumps({

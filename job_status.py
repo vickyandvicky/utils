@@ -1,7 +1,7 @@
 import json
 import unittest
 from unittest.mock import patch, MagicMock
-from your_module import execute  # Make sure to replace 'your_module' with the actual module name
+from your_module import execute  # Replace 'your_module' with the actual module name
 
 class TestExecuteFunction(unittest.TestCase):
     @patch('your_module.invoke_step_function')
@@ -17,8 +17,9 @@ class TestExecuteFunction(unittest.TestCase):
         'STEPFUNCTION_NAME': 'test-step-function'
     })
     def test_execute_with_records(self, mock_job_audit_table, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
+        # Mock audit table instance and its methods
         mock_audit_table_instance = MagicMock()
-        mock_audit_table_instance.update_audit_record.return_value = {"job_status": "DISABLED"}
+        mock_audit_table_instance.update_audit_record.return_value = {"job_status": {"S": "DISABLED"}}  # Return expected format
         mock_job_audit_table.return_value = mock_audit_table_instance
         
         # Mock return value for get_src_run_id_for_dependency

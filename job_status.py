@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
+import json
 from your_module import execute, JobAuditTable
 
 class TestYourModule(unittest.TestCase):
@@ -23,7 +24,7 @@ class TestYourModule(unittest.TestCase):
         self.context = {}
         
         # Patch the environment variables
-        patcher = patch.dict('os.environ', {
+        self.env_patcher = patch.dict('os.environ', {
             'AWS_ACCOUNT': '123456789012',
             'CLUSTER_NAME': 'test-cluster',
             'CONFIG_PATH': 's3://bucket/config/path',
@@ -33,12 +34,13 @@ class TestYourModule(unittest.TestCase):
             'ENVIRONMENT': 'test',
             'EDP_UTILS_PATH': 's3://bucket/edp/utils/path'
         })
-        self.addCleanup(patcher.stop)
-        patcher.start()
+        self.env_patcher.start()
+        self.addCleanup(self.env_patcher.stop)
         
         # Patch the JobAuditTable methods
-        self.mock_job_audit_table = patch('your_module.JobAuditTable', autospec=True).start()
-        self.addCleanup(self.mock_job_audit_table.stop)
+        self.job_audit_table_patcher = patch('your_module.JobAuditTable', autospec=True)
+        self.mock_job_audit_table = self.job_audit_table_patcher.start()
+        self.addCleanup(self.job_audit_table_patcher.stop)
         
         self.mock_job_audit_table_instance = self.mock_job_audit_table.return_value
         self.mock_job_audit_table_instance.get_audit_record_by_version.side_effect = [

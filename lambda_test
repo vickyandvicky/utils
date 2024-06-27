@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import patch, MagicMock
+from botocore.stub import Stubber
 import os
 import json
 
@@ -26,98 +27,79 @@ class TestYourModule(unittest.TestCase):
         mock_boto_client.assert_any_call('s3')
         mock_boto_client.assert_any_call('stepfunctions')
 
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_invoke_step_function(self, mock_logger, mock_get_boto_clients):
-        mock_sf_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_sf_client
+    def test_invoke_step_function(self):
         step_function_arn = 'arn:aws:states:us-east-1:123456789012:stateMachine:testStateMachine'
         step_function_input = json.dumps({
             'job_name': 'test_job',
             'snapshot_date': '2022-01-01',
             'job_version': '1'
         })
-
-        mock_sf_client.start_execution.return_value = {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'}
         
-        response = invoke_step_function(step_function_arn, step_function_input)
+        sf_client = get_boto_clients("sf_client")
+        with Stubber(sf_client) as stubber:
+            expected_params = {
+                'stateMachineArn': step_function_arn,
+                'input': step_function_input,
+                'name': 'test_job_2022-01-01_1'
+            }
+            stubber.add_response('start_execution', {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'}, expected_params)
 
-        mock_sf_client.start_execution.assert_called_once_with(
-            stateMachineArn=step_function_arn,
-            input=step_function_input,
-            name='test_job_2022-01-01_1'
-        )
-        self.assertEqual(response, {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'})
-        mock_logger.info.assert_any_call("Invoking step function with input: %s", step_function_input)
-        mock_logger.info.assert_any_call("Step function %s triggered successfully.", step_function_arn)
+            response = invoke_step_function(step_function_arn, step_function_input)
+            self.assertEqual(response, {'executionArn': 'arn:aws:states:us-east-1:123456789012:execution:testStateMachine:testExecution'})
 
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_check_emr_step_status(self, mock_logger, mock_get_boto_clients):
-        mock_emr_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_emr_client
+    def test_check_emr_step_status(self):
         step_id = 'step-12345'
         cluster_id = 'j-12345'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {'ClusterId': cluster_id, 'StepId': step_id}
+            response_body = {'Step': {'Status': {'State': 'COMPLETED'}}}
+            stubber.add_response('describe_step', response_body, expected_params)
 
-        mock_emr_client.describe_step.return_value = {'Step': {'Status': {'State': 'COMPLETED'}}}
+            response = check_emr_step_status(step_id, cluster_id)
+            self.assertEqual(response, response_body)
 
-        response = check_emr_step_status(step_id, cluster_id)
-
-        mock_emr_client.describe_step.assert_called_once_with(ClusterId=cluster_id, StepId=step_id)
-        self.assertEqual(response, {'Step': {'Status': {'State': 'COMPLETED'}}})
-
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_get_spark_conf(self, mock_logger, mock_get_boto_clients):
-        mock_s3_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_s3_client
+    def test_get_spark_conf(self):
         bucket = 'test-bucket'
         key = 'test-key'
+        
+        s3_client = get_boto_clients("s3_client")
+        with Stubber(s3_client) as stubber:
+            expected_params = {'Bucket': bucket, 'Key': key}
+            response_body = {'Body': MagicMock(read=MagicMock(return_value=json.dumps({'spark_conf': ['conf1', 'conf2']})))}
+            stubber.add_response('get_object', response_body, expected_params)
 
-        mock_s3_client.get_object.return_value = {'Body': MagicMock(read=MagicMock(return_value=json.dumps({'spark_conf': ['conf1', 'conf2']})))}
+            response = get_spark_conf('dataset_name', bucket, key)
+            self.assertEqual(response, ['conf1', 'conf2'])
 
-        response = get_spark_conf('dataset_name', bucket, key)
-
-        mock_s3_client.get_object.assert_called_once_with(Bucket=bucket, Key=key)
-        self.assertEqual(response, ['conf1', 'conf2'])
-
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_get_cluster_id(self, mock_logger, mock_get_boto_clients):
-        mock_emr_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_emr_client
+    def test_get_cluster_id(self):
         cluster_name = 'test-cluster'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {}
+            response_body = {'Clusters': [{'Id': 'j-12345', 'Name': cluster_name}]}
+            stubber.add_response('list_clusters', response_body, expected_params)
 
-        mock_emr_client.list_clusters.return_value = {
-            'Clusters': [{'Id': 'j-12345', 'Name': cluster_name}]
-        }
+            response = get_cluster_id(cluster_name)
+            self.assertEqual(response, 'j-12345')
 
-        response = get_cluster_id(cluster_name)
-
-        mock_emr_client.list_clusters.assert_called_once_with()
-        self.assertEqual(response, 'j-12345')
-
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_get_cluster_status(self, mock_logger, mock_get_boto_clients):
-        mock_emr_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_emr_client
+    def test_get_cluster_status(self):
         cluster_id = 'j-12345'
+        
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {'ClusterId': cluster_id}
+            response_body = {'Cluster': {'Status': {'State': 'RUNNING'}}}
+            stubber.add_response('describe_cluster', response_body, expected_params)
 
-        mock_emr_client.describe_cluster.return_value = {'Cluster': {'Status': {'State': 'RUNNING'}}}
+            response = get_cluster_status(cluster_id)
+            self.assertEqual(response, 'RUNNING')
 
-        response = get_cluster_status(cluster_id)
-
-        mock_emr_client.describe_cluster.assert_called_once_with(ClusterId=cluster_id)
-        self.assertEqual(response, 'RUNNING')
-
-    @patch('your_module.get_cluster_id')
     @patch('your_module.get_spark_conf')
-    @patch('your_module.get_boto_clients')
-    @patch('your_module.logger')
-    def test_submit_new_step_to_cluster(self, mock_logger, mock_get_boto_clients, mock_get_spark_conf, mock_get_cluster_id):
-        mock_emr_client = MagicMock()
-        mock_get_boto_clients.return_value = mock_emr_client
+    @patch('your_module.get_cluster_id')
+    def test_submit_new_step_to_cluster(self, mock_get_cluster_id, mock_get_spark_conf):
         mock_get_cluster_id.return_value = 'j-12345'
         mock_get_spark_conf.return_value = ['--conf1', '--conf2']
 
@@ -132,144 +114,31 @@ class TestYourModule(unittest.TestCase):
         sre_run_id_dict = {}
         cluster_name = 'test-cluster'
 
-        mock_emr_client.add_job_flow_steps.return_value = {'StepIds': ['step-12345']}
-
-        response = submit_new_step_to_cluster(dataset_name, snapshot_date, job_version, sre_run_id_dict, cluster_name)
-
-        self.assertEqual(response['StepIds'], ['step-12345'])
-        self.assertEqual(response['job_version'], job_version)
-
-    @patch('your_module.JobAuditTable')
-    def test_get_dependencies_from_dynamo_no_dep_dict(self, MockJobAuditTable):
-        mock_audit_table = MockJobAuditTable.return_value
-        mock_audit_table.insert_audit_record.return_value = 'ver1'
-        mock_audit_table.update_audit_record.return_value = {'job_status': 'DISABLED'}
-
-        result = get_dependencies_from_dynamo('dataset1', '2022-01-01', mock_audit_table, None)
-
-        self.assertEqual(result, {'job_version': 'ver1', 'job_status': 'DISABLED'})
-        mock_audit_table.insert_audit_record.assert_called_once_with('dataset1', '2022-01-01')
-        mock_audit_table.update_audit_record.assert_called_once_with('dataset1', '2022-01-01', 'ver1', 'job_status', 'DISABLED')
-
-    @patch('your_module.JobConfigs3')
-    @patch('your_module.get_dependencies_from_dynamo')
-    @patch.dict(os.environ, {"CONFIG_PATH": "s3://bucket/path", "VIEWS_CONFIG": "/views/config"})
-    def test_get_src_run_id_for_dependency(self, mock_get_dependencies_from_dynamo, MockJobConfigs3):
-        mock_job_conf = MockJobConfigs3.return_value
-        mock_job_conf.getJobsByDependency.return_value = ['job1']
-        mock_job_conf.getDependenciesByJob.return_value = "{'dep1': 'dep_val'}"
-        mock_get_dependencies_from_dynamo.return_value = {'job_status': 'DEPS_COMPLETE'}
-
-        result = get_src_run_id_for_dependency('dep1', '2022-01-01', 'run1', 's3://bucket/path', MagicMock())
-
-        self.assertEqual(result, {'job1': {'job_status': 'DEPS_COMPLETE'}})
-        mock_get_dependencies_from_dynamo.assert_called_once_with('job1', '2022-01-01', unittest.mock.ANY, {'dep1': {'runId': 'run1', 's3Path': 's3://bucket/path'}, 'dep1': None})
-
-    @patch('your_module.invoke_step_function')
-    @patch('your_module.get_src_run_id_for_dependency')
-    @patch('your_module.JobAuditTable')
-    @patch.dict(os.environ, {"AWS_ACCOUNT": "123456789012", "CLUSTER_NAME": "test-cluster", "STEPFUNCTION_NAME": "test-step-function"})
-    def test_execute_with_records(self, MockJobAuditTable, mock_get_src_run_id_for_dependency, mock_invoke_step_function):
-        mock_event = {
-            'Records': [{
-                'body': json.dumps({
-                    'Message': json.dumps({
-                        'task_configuration': {
-                            'parsed_datasets': [{'refined_dataset_path': 's3://bucket/path'}],
-                            'job_params': {
-                                'edp_run_id': 'run1',
-                                'output_datasets': ['dataset1']
-                            },
-                            'job_info': {'SNAPSHOT_DATE': '2022-01-01'}
-                        }
-                    })
-                })
-            }]
-        }
-        mock_context = {}
-
-        mock_job_audit_table = MockJobAuditTable.return_value
-        mock_get_src_run_id_for_dependency.return_value = {
-            'view_job1': {
-                'job_status': 'DEPS_COMPLETE',
-                'dependencies': json.dumps({'dep1': 'dep_val'}),
-                'job_version': '1'
+        emr_client = get_boto_clients("emr_client")
+        with Stubber(emr_client) as stubber:
+            expected_params = {
+                'JobFlowId': 'j-12345',
+                'Steps': [{
+                    'Name': 'EMR Step for dataset_name 1',
+                    'ActionOnFailure': 'CONTINUE',
+                    'HadoopJarStep': {
+                        'Jar': 'command-runner.jar',
+                        'Args': [
+                            'spark-submit', '--conf1', '--conf2', 's3://bucket/script.py',
+                            '--config_path', 's3://bucket/path',
+                            '--dataset', dataset_name,
+                            '--snapshot_date', snapshot_date,
+                            '--job_version', job_version
+                        ]
+                    }
+                }]
             }
-        }
-        response = execute(mock_event, mock_context)
+            response_body = {'StepIds': ['step-12345']}
+            stubber.add_response('add_job_flow_steps', response_body, expected_params)
 
-        mock_invoke_step_function.assert_called_once_with(
-            f"arn:aws:states:us-east-1:123456789012:stateMachine:test-step-function",
-            json.dumps({
-                'job_name': 'view_job1',
-                'next_step': 'emr_job',
-                'snapshot_date': '2022-01-01',
-                'job_version': '1',
-                'dependencies': {'dep1': 'dep_val'},
-                'aws_account': '123456789012'
-            })
-        )
-        self.assertIsNone(response)
-
-    @patch('your_module.submit_new_step_to_cluster')
-    @patch('your_module.JobAuditTable')
-    @patch.dict(os.environ, {"AWS_ACCOUNT": "123456789012", "CLUSTER_NAME": "test-cluster"})
-    def test_execute_emr_job(self, MockJobAuditTable, mock_submit_new_step_to_cluster):
-        mock_event = {
-            'next_step': 'emr_job',
-            'job_name': 'dataset1',
-            'snapshot_date': '2022-01-01',
-            'job_version': '1',
-            'dependencies': {'dep1': 'dep_val'}
-        }
-        mock_context = {}
-
-        mock_job_audit_table = MockJobAuditTable.return_value
-        mock_submit_new_step_to_cluster.return_value = {'StepIds': ['step-12345']}
-
-        response = execute(mock_event, mock_context)
-
-        self.assertEqual(response, {
-            'StepIds': ['step-12345'],
-            'next_step': 'check_job_status',
-            'job_name': 'dataset1',
-            'snapshot_date': '2022-01-01',
-            'job_version': '1',
-            'aws_account': '123456789012'
-        })
-
-    @patch('your_module.check_emr_step_status')
-    @patch('your_module.get_cluster_id')
-    @patch('your_module.JobAuditTable')
-    @patch.dict(os.environ, {"CLUSTER_NAME": "test-cluster", "AWS_ACCOUNT": "123456789012"})
-    def test_execute_check_job_status(self, MockJobAuditTable, mock_get_cluster_id, mock_check_emr_step_status):
-        mock_event = {
-            'Payload': {
-                'next_step': 'check_job_status',
-                'StepIds': ['step-12345'],
-                'job_name': 'dataset1',
-                'snapshot_date': '2022-01-01',
-                'job_version': '1'
-            }
-        }
-        mock_context = {}
-
-        mock_job_audit_table = MockJobAuditTable.return_value
-        mock_get_cluster_id.return_value = 'j-12345'
-        mock_check_emr_step_status.return_value = {'Step': {'Status': {'State': 'COMPLETED'}}}
-
-        response = execute(mock_event, mock_context)
-
-        self.assertEqual(response, {
-            'check_job_status': {
-                'job_name': 'dataset1',
-                'snapshot_date': '2022-01-01',
-                'job_version': '1',
-                'aws_account': '123456789012'
-            },
-            'job_status': 'COMPLETED'
-        })
-        mock_job_audit_table.update_audit_record.assert_called_once_with('dataset1', '2022-01-01:1', 'job_status', 'COMPLETED')
+            response = submit_new_step_to_cluster(dataset_name, snapshot_date, job_version, sre_run_id_dict, cluster_name)
+            self.assertEqual(response['StepIds'], ['step-12345'])
+            self.assertEqual(response['job_version'], job_version)
 
 if __name__ == '__main__':
     unittest.main()

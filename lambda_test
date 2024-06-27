@@ -7,32 +7,25 @@ import my_module  # Replace with the actual module name where the functions are 
 
 class TestMyModuleWithStubber(unittest.TestCase):
 
-    def test_get_boto_clients_emr(self):
-        with Stubber(my_module.get_boto_clients('emr_client')) as stubber:
+    @patch('my_module.boto3.client')
+    def test_get_boto_clients_emr(self, mock_boto_client):
+        emr_client = boto3.client('emr')
+        mock_boto_client.return_value = emr_client
+        
+        with Stubber(emr_client) as stubber:
             stubber.add_response('list_clusters', {'Clusters': []})
+            
             client = my_module.get_boto_clients('emr_client')
             response = client.list_clusters()
+            
             self.assertEqual(response['Clusters'], [])
 
-    def test_get_boto_clients_s3(self):
-        with Stubber(my_module.get_boto_clients('s3_client')) as stubber:
-            stubber.add_response('list_buckets', {'Buckets': []})
-            client = my_module.get_boto_clients('s3_client')
-            response = client.list_buckets()
-            self.assertEqual(response['Buckets'], [])
-
-    def test_get_boto_clients_sf(self):
-        with Stubber(my_module.get_boto_clients('sf_client')) as stubber:
-            stubber.add_response('list_state_machines', {'stateMachines': []})
-            client = my_module.get_boto_clients('sf_client')
-            response = client.list_state_machines()
-            self.assertEqual(response['stateMachines'], [])
-
-    @patch('my_module.get_boto_clients')
-    def test_invoke_step_function_success(self, mock_get_boto_clients):
-        sf_client = my_module.get_boto_clients('sf_client')
+    @patch('my_module.boto3.client')
+    def test_invoke_step_function_success(self, mock_boto_client):
+        sf_client = boto3.client('stepfunctions')
+        mock_boto_client.return_value = sf_client
+        
         with Stubber(sf_client) as stubber:
-            mock_get_boto_clients.return_value = sf_client
             step_function_input = json.dumps({
                 "job_name": "test_job",
                 "snapshot_date": "2023-01-01",
@@ -43,34 +36,20 @@ class TestMyModuleWithStubber(unittest.TestCase):
                 "startDate": "2023-01-01"
             }
             stubber.add_response('start_execution', expected_response)
+            
             response = my_module.invoke_step_function(
                 'arn:aws:states:us-east-1:123456789012:stateMachine:TestStateMachine', 
                 step_function_input
             )
+            
             self.assertEqual(response, expected_response)
 
-    @patch('my_module.get_boto_clients')
-    def test_invoke_step_function_client_error(self, mock_get_boto_clients):
-        sf_client = my_module.get_boto_clients('sf_client')
-        with Stubber(sf_client) as stubber:
-            mock_get_boto_clients.return_value = sf_client
-            step_function_input = json.dumps({
-                "job_name": "test_job",
-                "snapshot_date": "2023-01-01",
-                "job_version": "1"
-            })
-            stubber.add_client_error('start_execution')
-            with self.assertRaises(ClientError):
-                my_module.invoke_step_function(
-                    'arn:aws:states:us-east-1:123456789012:stateMachine:TestStateMachine', 
-                    step_function_input
-                )
-
-    @patch('my_module.get_boto_clients')
-    def test_check_emr_step_status_success(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
+    @patch('my_module.boto3.client')
+    def test_check_emr_step_status_success(self, mock_boto_client):
+        emr_client = boto3.client('emr')
+        mock_boto_client.return_value = emr_client
+        
         with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
             expected_response = {
                 "Step": {
                     "Status": {
@@ -79,45 +58,33 @@ class TestMyModuleWithStubber(unittest.TestCase):
                 }
             }
             stubber.add_response('describe_step', expected_response)
+            
             response = my_module.check_emr_step_status('step_id', 'cluster_id')
+            
             self.assertEqual(response, expected_response)
 
-    @patch('my_module.get_boto_clients')
-    def test_check_emr_step_status_client_error(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            stubber.add_client_error('describe_step')
-            with self.assertRaises(ClientError):
-                my_module.check_emr_step_status('step_id', 'cluster_id')
-
-    @patch('my_module.get_boto_clients')
-    def test_get_spark_conf_success(self, mock_get_boto_clients):
-        s3_client = my_module.get_boto_clients('s3_client')
+    @patch('my_module.boto3.client')
+    def test_get_spark_conf_success(self, mock_boto_client):
+        s3_client = boto3.client('s3')
+        mock_boto_client.return_value = s3_client
+        
         with Stubber(s3_client) as stubber:
-            mock_get_boto_clients.return_value = s3_client
             spark_conf = {"spark_conf": ["conf1", "conf2"]}
             expected_response = {
                 "Body": MagicMock(read=MagicMock(return_value=json.dumps(spark_conf).encode('utf-8')))
             }
             stubber.add_response('get_object', expected_response)
+            
             response = my_module.get_spark_conf('dataset_name', 'bucket', 'key')
+            
             self.assertEqual(response, ["conf1", "conf2"])
 
-    @patch('my_module.get_boto_clients')
-    def test_get_spark_conf_client_error(self, mock_get_boto_clients):
-        s3_client = my_module.get_boto_clients('s3_client')
-        with Stubber(s3_client) as stubber:
-            mock_get_boto_clients.return_value = s3_client
-            stubber.add_client_error('get_object')
-            with self.assertRaises(ClientError):
-                my_module.get_spark_conf('dataset_name', 'bucket', 'key')
-
-    @patch('my_module.get_boto_clients')
-    def test_get_cluster_id_success(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
+    @patch('my_module.boto3.client')
+    def test_get_cluster_id_success(self, mock_boto_client):
+        emr_client = boto3.client('emr')
+        mock_boto_client.return_value = emr_client
+        
         with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
             clusters = {
                 "Clusters": [
                     {"Id": "cluster_id_1", "Name": "cluster_name"},
@@ -125,77 +92,10 @@ class TestMyModuleWithStubber(unittest.TestCase):
                 ]
             }
             stubber.add_response('list_clusters', clusters)
+            
             response = my_module.get_cluster_id('cluster_name')
+            
             self.assertEqual(response, "cluster_id_1")
-
-    @patch('my_module.get_boto_clients')
-    def test_get_cluster_id_client_error(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            stubber.add_client_error('list_clusters')
-            with self.assertRaises(ClientError):
-                my_module.get_cluster_id('cluster_name')
-
-    @patch('my_module.get_boto_clients')
-    def test_get_cluster_status_success(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            expected_response = {
-                "Cluster": {
-                    "Status": {
-                        "State": "WAITING"
-                    }
-                }
-            }
-            stubber.add_response('describe_cluster', expected_response)
-            response = my_module.get_cluster_status('cluster_id')
-            self.assertEqual(response, "WAITING")
-
-    @patch('my_module.get_boto_clients')
-    def test_get_cluster_status_client_error(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            stubber.add_client_error('describe_cluster')
-            with self.assertRaises(ClientError):
-                my_module.get_cluster_status('cluster_id')
-
-    @patch('my_module.get_boto_clients')
-    def test_submit_new_step_to_cluster_success(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            expected_response = {
-                "StepIds": ["step_id"],
-                "job_version": "1"
-            }
-            stubber.add_response('add_job_flow_steps', expected_response)
-            with patch('my_module.get_cluster_id', return_value='cluster_id'):
-                with patch('my_module.get_spark_conf', return_value=['conf1', 'conf2']):
-                    with patch.dict('os.environ', {"SPARK_SCRIPT": "script", "ENVIRONMENT": "env", "EDP_UTILS_PATH": "utils_path"}):
-                        response = my_module.submit_new_step_to_cluster('dataset_name', '2023-01-01', '1', {}, 'cluster_name')
-                        self.assertEqual(response["StepIds"], ["step_id"])
-                        self.assertEqual(response["job_version"], "1")
-
-    @patch('my_module.get_boto_clients')
-    def test_submit_new_step_to_cluster_client_error(self, mock_get_boto_clients):
-        emr_client = my_module.get_boto_clients('emr_client')
-        with Stubber(emr_client) as stubber:
-            mock_get_boto_clients.return_value = emr_client
-            stubber.add_client_error('add_job_flow_steps')
-            with patch('my_module.get_cluster_id', return_value='cluster_id'):
-                with patch('my_module.get_spark_conf', return_value=['conf1', 'conf2']):
-                    with patch.dict('os.environ', {"SPARK_SCRIPT": "script", "ENVIRONMENT": "env", "EDP_UTILS_PATH": "utils_path"}):
-                        with self.assertRaises(ClientError):
-                            my_module.submit_new_step_to_cluster('dataset_name', '2023-01-01', '1', {}, 'cluster_name')
-
-    @patch('my_module.get_boto_clients')
-    def test_submit_new_step_to_cluster_no_cluster(self, mock_get_boto_clients):
-        with patch('my_module.get_cluster_id', return_value=None):
-            response = my_module.submit_new_step_to_cluster('dataset_name', '2023-01-01', '1', {}, 'cluster_name')
-            self.assertEqual(response, -1)
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,5 +1,4 @@
 import json
-import os
 import unittest
 from unittest.mock import patch, MagicMock
 from your_module import execute  # Make sure to replace 'your_module' with the actual module name

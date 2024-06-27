@@ -23,7 +23,7 @@ class TestExecuteFunction(unittest.TestCase):
         
         mock_get_src_run_id_for_dependency.return_value = {
             'job1': {
-                'job_status': 'DISABLED',
+                'job_status': {'S': 'DISABLED'},
                 'dependencies': json.dumps({'dep1': {'runId': '123', 's3Path': 's3://path'}}),
                 'job_version': '1'
             }

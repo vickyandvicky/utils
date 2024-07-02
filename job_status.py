@@ -182,6 +182,24 @@ class TestExecuteFunction(unittest.TestCase):
         self.assertEqual(result['check_job_status']['job_version'], '1')
         self.assertEqual(result['job_status'], 'RUNNING')
 
+@patch('your_module.get_boto_clients')
+@patch('json.loads')
+def test_get_spark_conf(self, mock_json_loads, mock_get_boto_clients):
+    mock_s3_client = MagicMock()
+    mock_get_boto_clients.return_value = mock_s3_client
+
+    bucket = 'test-bucket'
+    key = 'test-key'
+    mock_s3_client.get_object.return_value = {
+        'Body': MagicMock(read=MagicMock(return_value=b'{"spark_conf": ["--conf1", "--conf2"]}'))
+    }
+    mock_json_loads.return_value = {'spark_conf': ['--conf1', '--conf2']}
+
+    response = get_spark_conf('dataset_name', bucket, key)
+
+    self.assertEqual(response, ['--conf1', '--conf2'])
+    mock_s3_client.get_object.assert_called_once_with(Bucket=bucket, Key=key)
+
 if __name__ == '__main__':
     unittest.main()
 

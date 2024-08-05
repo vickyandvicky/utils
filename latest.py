@@ -151,7 +151,7 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
 
         self.audit_table.update_audit_record.assert_called_with(self.dataset_name, f"{self.snapshot_date}:1", "job_status", "DEPS_COMPLETE")
         self.assertEqual(result["job_version"], "1")
-        self.assertEqual(result["job_status"], "DEPS_COMPLETE")
+        self.assertEqual(result["job_status"], {"S": "DEPS_COMPLETE"})
 
 if __name__ == '__main__':
     unittest.main()

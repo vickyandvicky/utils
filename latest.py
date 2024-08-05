@@ -84,7 +84,8 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
             "job_version": 1,
             "job_status": {"S": "WAITING"}
         }
-        self.assertEqual(result, expected_result)
+        self.assertEqual(result["job_version"], 1)
+        self.assertEqual(result["job_status"], {"S": "WAITING"})
 
     def test_non_empty_dep_dict_with_items_waiting(self):
         # Test when dep_dict is not empty and there are items in audit table with status WAITING

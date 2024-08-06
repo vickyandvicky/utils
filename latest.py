@@ -44,7 +44,6 @@ def get_dependencies_from_dynamo(dataset_name, snapshot_date, audit_table, dep_d
             record["job_status"] = rec_val["job_status"]
         return record
 
-
 class TestGetDependenciesFromDynamo(unittest.TestCase):
 
     def setUp(self):
@@ -55,11 +54,15 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
     def test_non_empty_dep_dict_no_items(self):
         # Test when dep_dict is not empty and no items in audit table
         self.audit_table.get_audit_record.return_value = []
-        self.audit_table.insert_audit_record.return_value = 1
+        self.audit_table.insert_audit_record.return_value = '1'
         self.audit_table.update_audit_record.side_effect = [
             None,
             {"job_status": "WAITING"}
         ]
+        self.audit_table.get_audit_record_by_version.return_value = {
+            "job_status": "WAITING",
+            "dependencies": json.dumps({"dep1": "value1"})
+        }
 
         dep_dict = {"dep1": "value1"}
         result = get_dependencies_from_dynamo(self.dataset_name, self.snapshot_date, self.audit_table, dep_dict)
@@ -69,10 +72,10 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
         self.audit_table.update_audit_record.assert_any_call(self.dataset_name, f"{self.snapshot_date}:1", "job_status", "WAITING")
 
         expected_result = {
-            "job_version": 1,
+            "job_version": '1',
             "job_status": {"S": "WAITING"}
         }
-        self.assertEqual(result["job_version"], 1)
+        self.assertEqual(result["job_version"], '1')
         self.assertEqual(result["job_status"], {"S": "WAITING"})
 
 if __name__ == '__main__':

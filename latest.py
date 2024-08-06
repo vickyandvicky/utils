@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 import json
 
+
 def get_dependencies_from_dynamo(dataset_name, snapshot_date, audit_table, dep_dict):
     if not dep_dict:
         ver = audit_table.insert_audit_record(dataset_name, snapshot_date)
@@ -43,6 +44,7 @@ def get_dependencies_from_dynamo(dataset_name, snapshot_date, audit_table, dep_d
             rec_val = audit_table.update_audit_record(dataset_name, snapshot_date + f":{job_version}", "job_status", "DEPS_COMPLETE")
             record["job_status"] = rec_val["job_status"]
         return record
+
 
 class TestGetDependenciesFromDynamo(unittest.TestCase):
 
@@ -99,7 +101,7 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
             "dependencies": json.dumps({"dep1": None})
         }
         self.audit_table.get_audit_record.return_value = [latest_record]
-        self.audit_table.update_audit_record.return_value = None
+        self.audit_table.update_audit_record.return_value = {"job_status": "WAITING"}
 
         dep_dict = {"dep1": "value1"}
         result = get_dependencies_from_dynamo(self.dataset_name, self.snapshot_date, self.audit_table, dep_dict)
@@ -123,7 +125,7 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
         }
         self.audit_table.get_audit_record.return_value = [latest_record]
         self.audit_table.insert_audit_record.return_value = 2
-        self.audit_table.update_audit_record.return_value = None
+        self.audit_table.update_audit_record.return_value = {"job_status": "WAITING"}
 
         dep_dict = {"dep1": "value1"}
         result = get_dependencies_from_dynamo(self.dataset_name, self.snapshot_date, self.audit_table, dep_dict)

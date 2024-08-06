@@ -57,7 +57,8 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
         self.audit_table.insert_audit_record.return_value = '1'
         self.audit_table.update_audit_record.side_effect = [
             None,
-            {"job_status": "WAITING"}
+            {"job_status": "WAITING"},
+            {"job_status": "DEPS_COMPLETE"}
         ]
         self.audit_table.get_audit_record_by_version.return_value = {
             "job_status": "WAITING",

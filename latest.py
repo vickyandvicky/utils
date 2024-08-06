@@ -71,7 +71,10 @@ class TestGetDependenciesFromDynamo(unittest.TestCase):
         # Test when dep_dict is not empty and no items in audit table
         self.audit_table.get_audit_record.return_value = []
         self.audit_table.insert_audit_record.return_value = 1
-        self.audit_table.update_audit_record.return_value = {"job_status": "WAITING"}
+        self.audit_table.update_audit_record.side_effect = [
+            None,
+            {"job_status": "WAITING"}
+        ]
 
         dep_dict = {"dep1": "value1"}
         result = get_dependencies_from_dynamo(self.dataset_name, self.snapshot_date, self.audit_table, dep_dict)
